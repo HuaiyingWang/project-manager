@@ -2,7 +2,7 @@
 
 以 Supabase 提供登入、雲端資料儲存與即時同步的專案管理網頁。
 
-首次啟用負責人名單時，請在 Supabase SQL Editor 執行 `project-owners.sql`。
+首次啟用或更新負責人管理功能時，請在 Supabase SQL Editor 執行 `project-owners.sql`。
 
 ## Vercel 部署設定
 

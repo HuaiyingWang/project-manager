@@ -18,6 +18,19 @@ on public.project_owners for insert
 to authenticated
 with check (true);
 
+drop policy if exists "登入者可以修改負責人" on public.project_owners;
+create policy "登入者可以修改負責人"
+on public.project_owners for update
+to authenticated
+using (true)
+with check (true);
+
+drop policy if exists "登入者可以刪除負責人" on public.project_owners;
+create policy "登入者可以刪除負責人"
+on public.project_owners for delete
+to authenticated
+using (true);
+
 insert into public.project_owners (name)
 select distinct trim(owner)
 from public.projects

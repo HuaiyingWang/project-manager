@@ -290,18 +290,32 @@
     }
     .loading.show { display: block; }
     .owner-list {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
+      display: grid;
+      gap: 10px;
       margin-top: 14px;
     }
-    .owner-chip {
-      padding: 7px 10px;
-      border-radius: 999px;
-      color: var(--brand);
-      background: #edf5f2;
+    .owner-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 10px 12px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: #fafafa;
+    }
+    .owner-item strong {
+      display: block;
       font-size: 13px;
-      font-weight: 700;
+    }
+    .owner-item span {
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .owner-item .actions { flex-shrink: 0; }
+    .owner-item .icon-button:disabled {
+      cursor: not-allowed;
+      opacity: .45;
     }
 
     @media (max-width: 760px) {
@@ -447,19 +461,22 @@
 
   <dialog id="ownerDialog">
     <div class="dialog-head">
-      <h2>新增專案負責人</h2>
+      <h2 id="ownerDialogTitle">管理專案負責人</h2>
       <button class="close" type="button" id="closeOwnerDialog" aria-label="關閉">×</button>
     </div>
     <form id="ownerForm">
+      <input id="ownerId" type="hidden">
+      <input id="ownerOriginalName" type="hidden">
       <div class="field">
         <label for="ownerName">負責人姓名 *</label>
         <input id="ownerName" required maxlength="60" placeholder="例如：李小姐">
-        <div class="hint">新增後，所有登入裝置都能使用這位負責人。</div>
+        <div class="hint" id="ownerFormHint">新增後，所有登入裝置都能使用這位負責人。</div>
       </div>
       <div class="owner-list" id="ownerList"></div>
       <div class="form-actions">
-        <button class="secondary" type="button" id="cancelOwnerDialog">取消</button>
-        <button class="primary" type="submit">新增負責人</button>
+        <button class="secondary" type="button" id="cancelOwnerEdit" hidden>取消編輯</button>
+        <button class="secondary" type="button" id="cancelOwnerDialog">關閉</button>
+        <button class="primary" id="saveOwnerButton" type="submit">新增負責人</button>
       </div>
     </form>
   </dialog>
@@ -574,8 +591,22 @@
         '<option value="">請選擇負責人</option>',
         ...names.map(name => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`)
       ].join("");
-      $("#ownerList").innerHTML = names.length
-        ? names.map(name => `<span class="owner-chip">${escapeHtml(name)}</span>`).join("")
+      $("#ownerList").innerHTML = owners.length
+        ? owners.map(owner => {
+          const projectCount = projects.filter(project => project.owner === owner.name).length;
+          return `
+            <div class="owner-item">
+              <div>
+                <strong>${escapeHtml(owner.name)}</strong>
+                <span>${projectCount ? `使用中的專案：${projectCount}` : "目前沒有使用中的專案"}</span>
+              </div>
+              <div class="actions">
+                <button class="icon-button" type="button" data-owner-edit-id="${owner.id}">編輯</button>
+                <button class="icon-button danger" type="button" data-owner-delete-id="${owner.id}" ${projectCount ? "disabled" : ""}>刪除</button>
+              </div>
+            </div>
+          `;
+        }).join("")
         : '<span class="hint">尚未新增負責人</span>';
 
       if (names.includes(currentFilter)) $("#ownerFilter").value = currentFilter;
@@ -682,15 +713,29 @@
       form.reset();
     }
 
+    function resetOwnerForm() {
+      $("#ownerForm").reset();
+      $("#ownerId").value = "";
+      $("#ownerOriginalName").value = "";
+      $("#ownerDialogTitle").textContent = "管理專案負責人";
+      $("#ownerFormHint").textContent = "新增後，所有登入裝置都能使用這位負責人。";
+      $("#saveOwnerButton").textContent = "新增負責人";
+      $("#cancelOwnerEdit").hidden = true;
+    }
+
     $("#addProject").addEventListener("click", openCreateDialog);
     $("#addOwner").addEventListener("click", () => {
-      $("#ownerForm").reset();
+      resetOwnerForm();
       renderOwners();
       ownerDialog.showModal();
       $("#ownerName").focus();
     });
     $("#closeOwnerDialog").addEventListener("click", () => ownerDialog.close());
     $("#cancelOwnerDialog").addEventListener("click", () => ownerDialog.close());
+    $("#cancelOwnerEdit").addEventListener("click", () => {
+      resetOwnerForm();
+      $("#ownerName").focus();
+    });
     $("#logoutButton").addEventListener("click", async () => {
       await supabaseClient.auth.signOut();
       showLogin();
@@ -710,20 +755,83 @@
 
     $("#ownerForm").addEventListener("submit", async event => {
       event.preventDefault();
+      const id = $("#ownerId").value;
+      const originalName = $("#ownerOriginalName").value;
       const name = $("#ownerName").value.trim();
       if (!name) return;
-      const { error } = await supabaseClient.from("project_owners").insert({ name });
+      let error;
+      if (id) {
+        ({ error } = await supabaseClient
+          .from("project_owners")
+          .update({ name })
+          .eq("id", id));
+        if (!error && name !== originalName) {
+          ({ error } = await supabaseClient
+            .from("projects")
+            .update({ owner: name, updated_at: new Date().toISOString() })
+            .eq("owner", originalName));
+          if (error) {
+            await supabaseClient
+              .from("project_owners")
+              .update({ name: originalName })
+              .eq("id", id);
+          }
+        }
+      } else {
+        ({ error } = await supabaseClient.from("project_owners").insert({ name }));
+      }
       if (error) {
         const message = error.code === "23505"
           ? "這位負責人已經存在"
-          : `新增失敗：${error.message}。請先在 Supabase 執行 project-owners.sql。`;
+          : `儲存失敗：${error.message}。請在 Supabase 重新執行 project-owners.sql。`;
         showToast(message);
         return;
       }
+      await loadProjects();
       await loadOwners();
       $("#owner").value = name;
-      ownerDialog.close();
-      showToast(`已新增負責人「${name}」`);
+      resetOwnerForm();
+      showToast(id ? `已更新負責人為「${name}」` : `已新增負責人「${name}」`);
+    });
+
+    $("#ownerList").addEventListener("click", async event => {
+      const editButton = event.target.closest("[data-owner-edit-id]");
+      const deleteButton = event.target.closest("[data-owner-delete-id]");
+
+      if (editButton) {
+        const owner = owners.find(item => item.id === editButton.dataset.ownerEditId);
+        if (!owner) return;
+        $("#ownerId").value = owner.id;
+        $("#ownerOriginalName").value = owner.name;
+        $("#ownerName").value = owner.name;
+        $("#ownerDialogTitle").textContent = "編輯專案負責人";
+        $("#ownerFormHint").textContent = "儲存後，既有專案中的負責人名稱也會同步更新。";
+        $("#saveOwnerButton").textContent = "儲存變更";
+        $("#cancelOwnerEdit").hidden = false;
+        $("#ownerName").focus();
+      }
+
+      if (deleteButton) {
+        const owner = owners.find(item => item.id === deleteButton.dataset.ownerDeleteId);
+        if (!owner) return;
+        const projectCount = projects.filter(project => project.owner === owner.name).length;
+        if (projectCount) {
+          showToast(`「${owner.name}」仍有 ${projectCount} 個專案，請先更換負責人`);
+          return;
+        }
+        if (!confirm(`確定要刪除負責人「${owner.name}」嗎？`)) return;
+        const { error } = await supabaseClient
+          .from("project_owners")
+          .delete()
+          .eq("id", owner.id);
+        if (error) {
+          showToast(`刪除失敗：${error.message}。請在 Supabase 重新執行 project-owners.sql。`);
+          return;
+        }
+        await loadOwners();
+        resetOwnerForm();
+        showToast(`已刪除負責人「${owner.name}」`);
+      }
     });
 
     $("#loginForm").addEventListener("submit", async event => {
