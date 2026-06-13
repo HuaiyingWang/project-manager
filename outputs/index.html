@@ -121,6 +121,8 @@
       outline: none;
     }
     .toolbar input { flex: 1; }
+    .toolbar .owner-filter { min-width: 160px; }
+    .toolbar .add-owner { white-space: nowrap; }
     .toolbar input:focus, .toolbar select:focus,
     .field input:focus, .field textarea:focus, .field select:focus {
       border-color: var(--brand);
@@ -287,6 +289,20 @@
       text-align: center;
     }
     .loading.show { display: block; }
+    .owner-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 14px;
+    }
+    .owner-chip {
+      padding: 7px 10px;
+      border-radius: 999px;
+      color: var(--brand);
+      background: #edf5f2;
+      font-size: 13px;
+      font-weight: 700;
+    }
 
     @media (max-width: 760px) {
       .shell { width: min(100% - 24px, 1440px); padding-top: 24px; }
@@ -344,6 +360,9 @@
 
     <section class="toolbar">
       <input id="searchInput" type="search" placeholder="搜尋專案名稱、負責人或內容">
+      <select class="owner-filter" id="ownerFilter" aria-label="篩選專案負責人">
+        <option value="">全部負責人</option>
+      </select>
       <select id="statusFilter" aria-label="篩選狀態">
         <option value="">全部狀態</option>
         <option>未開始</option>
@@ -351,6 +370,7 @@
         <option>維護中</option>
         <option>已完成</option>
       </select>
+      <button class="secondary add-owner" id="addOwner">＋ 新增負責人</button>
     </section>
 
     <section class="table-wrap">
@@ -391,7 +411,9 @@
         </div>
         <div class="field">
           <label for="owner">專案負責人 *</label>
-          <input id="owner" required maxlength="60">
+          <select id="owner" required>
+            <option value="">請選擇負責人</option>
+          </select>
         </div>
         <div class="field full">
           <label for="projectData">專案資料 *</label>
@@ -423,6 +445,25 @@
     </form>
   </dialog>
 
+  <dialog id="ownerDialog">
+    <div class="dialog-head">
+      <h2>新增專案負責人</h2>
+      <button class="close" type="button" id="closeOwnerDialog" aria-label="關閉">×</button>
+    </div>
+    <form id="ownerForm">
+      <div class="field">
+        <label for="ownerName">負責人姓名 *</label>
+        <input id="ownerName" required maxlength="60" placeholder="例如：李小姐">
+        <div class="hint">新增後，所有登入裝置都能使用這位負責人。</div>
+      </div>
+      <div class="owner-list" id="ownerList"></div>
+      <div class="form-actions">
+        <button class="secondary" type="button" id="cancelOwnerDialog">取消</button>
+        <button class="primary" type="submit">新增負責人</button>
+      </div>
+    </form>
+  </dialog>
+
   <div class="toast" id="toast" role="status"></div>
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -440,8 +481,10 @@
 
     const $ = (selector) => document.querySelector(selector);
     const dialog = $("#projectDialog");
+    const ownerDialog = $("#ownerDialog");
     const form = $("#projectForm");
     let projects = [];
+    let owners = [];
     let realtimeChannel = null;
     let activeUserId = null;
 
@@ -477,8 +520,10 @@
     function render() {
       const query = $("#searchInput").value.trim().toLowerCase();
       const filter = $("#statusFilter").value;
+      const ownerFilter = $("#ownerFilter").value;
       const visible = projects
         .filter(project => !filter || project.status === filter)
+        .filter(project => !ownerFilter || project.owner === ownerFilter)
         .filter(project => {
           const text = [project.name, project.owner, project.project_data, project.notes].join(" ").toLowerCase();
           return !query || text.includes(query);
@@ -514,6 +559,45 @@
       $("#completedCount").textContent = projects.filter(p => p.status === "已完成").length;
     }
 
+    function renderOwners() {
+      const projectOwnerNames = projects.map(project => project.owner).filter(Boolean);
+      const names = [...new Set([...owners.map(owner => owner.name), ...projectOwnerNames])]
+        .sort((a, b) => a.localeCompare(b, "zh-Hant"));
+      const currentFilter = $("#ownerFilter").value;
+      const currentOwner = $("#owner").value;
+
+      $("#ownerFilter").innerHTML = [
+        '<option value="">全部負責人</option>',
+        ...names.map(name => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`)
+      ].join("");
+      $("#owner").innerHTML = [
+        '<option value="">請選擇負責人</option>',
+        ...names.map(name => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`)
+      ].join("");
+      $("#ownerList").innerHTML = names.length
+        ? names.map(name => `<span class="owner-chip">${escapeHtml(name)}</span>`).join("")
+        : '<span class="hint">尚未新增負責人</span>';
+
+      if (names.includes(currentFilter)) $("#ownerFilter").value = currentFilter;
+      if (names.includes(currentOwner)) $("#owner").value = currentOwner;
+    }
+
+    async function loadOwners() {
+      const { data, error } = await supabaseClient
+        .from("project_owners")
+        .select("*")
+        .order("name", { ascending: true });
+      if (error) {
+        owners = [];
+        if (error.code !== "PGRST205" && error.code !== "42P01") {
+          showToast(`負責人名單讀取失敗：${error.message}`);
+        }
+      } else {
+        owners = data || [];
+      }
+      renderOwners();
+    }
+
     async function loadProjects() {
       $("#loadingState").classList.add("show");
       const { data, error } = await supabaseClient
@@ -526,6 +610,7 @@
         return;
       }
       projects = data || [];
+      renderOwners();
       render();
     }
 
@@ -538,6 +623,11 @@
           schema: "public",
           table: "projects"
         }, () => loadProjects())
+        .on("postgres_changes", {
+          event: "*",
+          schema: "public",
+          table: "project_owners"
+        }, () => loadOwners())
         .subscribe();
     }
 
@@ -547,11 +637,13 @@
       if (activeUserId === session.user.id) return;
       activeUserId = session.user.id;
       await loadProjects();
+      await loadOwners();
       startRealtime();
     }
 
     function showLogin() {
       projects = [];
+      owners = [];
       activeUserId = null;
       render();
       $("#loginScreen").hidden = false;
@@ -591,6 +683,14 @@
     }
 
     $("#addProject").addEventListener("click", openCreateDialog);
+    $("#addOwner").addEventListener("click", () => {
+      $("#ownerForm").reset();
+      renderOwners();
+      ownerDialog.showModal();
+      $("#ownerName").focus();
+    });
+    $("#closeOwnerDialog").addEventListener("click", () => ownerDialog.close());
+    $("#cancelOwnerDialog").addEventListener("click", () => ownerDialog.close());
     $("#logoutButton").addEventListener("click", async () => {
       await supabaseClient.auth.signOut();
       showLogin();
@@ -599,9 +699,31 @@
     $("#cancelDialog").addEventListener("click", closeDialog);
     $("#searchInput").addEventListener("input", render);
     $("#statusFilter").addEventListener("change", render);
+    $("#ownerFilter").addEventListener("change", render);
 
     dialog.addEventListener("click", event => {
       if (event.target === dialog) closeDialog();
+    });
+    ownerDialog.addEventListener("click", event => {
+      if (event.target === ownerDialog) ownerDialog.close();
+    });
+
+    $("#ownerForm").addEventListener("submit", async event => {
+      event.preventDefault();
+      const name = $("#ownerName").value.trim();
+      if (!name) return;
+      const { error } = await supabaseClient.from("project_owners").insert({ name });
+      if (error) {
+        const message = error.code === "23505"
+          ? "這位負責人已經存在"
+          : `新增失敗：${error.message}。請先在 Supabase 執行 project-owners.sql。`;
+        showToast(message);
+        return;
+      }
+      await loadOwners();
+      $("#owner").value = name;
+      ownerDialog.close();
+      showToast(`已新增負責人「${name}」`);
     });
 
     $("#loginForm").addEventListener("submit", async event => {
@@ -629,7 +751,7 @@
       const id = $("#projectId").value;
       const entry = {
         name: $("#projectName").value.trim(),
-        owner: $("#owner").value.trim(),
+        owner: $("#owner").value,
         project_data: $("#projectData").value.trim(),
         due_date: $("#dueDate").value,
         notes: $("#notes").value.trim(),
