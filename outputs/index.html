@@ -377,6 +377,9 @@
       <select class="owner-filter" id="ownerFilter" aria-label="篩選專案負責人">
         <option value="">全部負責人</option>
       </select>
+      <select id="monthFilter" aria-label="篩選交件年月">
+        <option value="">全部年月</option>
+      </select>
       <select id="statusFilter" aria-label="篩選狀態">
         <option value="">全部狀態</option>
         <option>未開始</option>
@@ -538,9 +541,11 @@
       const query = $("#searchInput").value.trim().toLowerCase();
       const filter = $("#statusFilter").value;
       const ownerFilter = $("#ownerFilter").value;
+      const monthFilter = $("#monthFilter").value;
       const visible = projects
         .filter(project => !filter || project.status === filter)
         .filter(project => !ownerFilter || project.owner === ownerFilter)
+        .filter(project => !monthFilter || project.due_date?.startsWith(monthFilter))
         .filter(project => {
           const text = [project.name, project.owner, project.project_data, project.notes].join(" ").toLowerCase();
           return !query || text.includes(query);
@@ -574,6 +579,25 @@
       $("#progressCount").textContent = projects.filter(p => p.status === "進行中").length;
       $("#maintenanceCount").textContent = projects.filter(p => p.status === "維護中").length;
       $("#completedCount").textContent = projects.filter(p => p.status === "已完成").length;
+    }
+
+    function renderMonths() {
+      const currentMonth = $("#monthFilter").value;
+      const months = [...new Set(
+        projects
+          .map(project => project.due_date?.slice(0, 7))
+          .filter(Boolean)
+      )].sort((a, b) => b.localeCompare(a));
+
+      $("#monthFilter").innerHTML = [
+        '<option value="">全部年月</option>',
+        ...months.map(month => {
+          const [year, number] = month.split("-");
+          return `<option value="${month}">${year} 年 ${number} 月</option>`;
+        })
+      ].join("");
+
+      if (months.includes(currentMonth)) $("#monthFilter").value = currentMonth;
     }
 
     function renderOwners() {
@@ -641,6 +665,7 @@
         return;
       }
       projects = data || [];
+      renderMonths();
       renderOwners();
       render();
     }
@@ -745,6 +770,7 @@
     $("#searchInput").addEventListener("input", render);
     $("#statusFilter").addEventListener("change", render);
     $("#ownerFilter").addEventListener("change", render);
+    $("#monthFilter").addEventListener("change", render);
 
     dialog.addEventListener("click", event => {
       if (event.target === dialog) closeDialog();
