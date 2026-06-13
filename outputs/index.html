@@ -377,7 +377,7 @@
       <select class="owner-filter" id="ownerFilter" aria-label="篩選專案負責人">
         <option value="">全部負責人</option>
       </select>
-      <select id="monthFilter" aria-label="篩選交件年月">
+      <select id="monthFilter" aria-label="篩選更新年月">
         <option value="">全部年月</option>
       </select>
       <select id="statusFilter" aria-label="篩選狀態">
@@ -545,7 +545,7 @@
       const visible = projects
         .filter(project => !filter || project.status === filter)
         .filter(project => !ownerFilter || project.owner === ownerFilter)
-        .filter(project => !monthFilter || project.due_date?.startsWith(monthFilter))
+        .filter(project => !monthFilter || project.updated_at?.startsWith(monthFilter))
         .filter(project => {
           const text = [project.name, project.owner, project.project_data, project.notes].join(" ").toLowerCase();
           return !query || text.includes(query);
@@ -585,7 +585,7 @@
       const currentMonth = $("#monthFilter").value;
       const months = [...new Set(
         projects
-          .map(project => project.due_date?.slice(0, 7))
+          .map(project => project.updated_at?.slice(0, 7))
           .filter(Boolean)
       )].sort((a, b) => b.localeCompare(a));
 
